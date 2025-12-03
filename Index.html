@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lightprint OS v20 (GlassUI) - PWA</title>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0000AA">
+    <meta name="description" content="Lightprint OS - Hybrid WebGPU / Neural Operating System">
+    
+    <style>
+        :root {
+            --bg: #121212;
+            --card: #1e1e1e;
+            --text: #e0e0e0;
+            --text-dim: #888;
+            --accent: #f39c12;
+            --primary: #3498db;
+            --success: #2ecc71;
+            --danger: #e74c3c;
+            --radius: 12px;
+        }
+
+        * { 
+            box-sizing: border-box; 
+            -webkit-tap-highlight-color: transparent; 
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 15px;
+            overflow-x: hidden;
+        }
+
+        #pwa-install-btn {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 10000;
+            font-weight: 600;
+            font-size: 12px;
+            box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+            display: none;
+        }
+
+        #pwa-install-btn:active {
+            transform: scale(0.95);
+        }
+
+        .pwa-status {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(52, 152, 219, 0.9);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 600;
+            z-index: 10000;
+            backdrop-filter: blur(10px);
+        }
+
+        #desktop-area {
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%;
+            pointer-events: none;
+            z-index: 9000;
+        }
+
+         .window {
+            /* --- ГЕОМЕТРИЯ (GPU) --- */
+            position: absolute;
+            top: 0; 
+            left: 0;
+            /* Двигаем через GPU, используем переменные */
+            transform: translate3d(var(--win-x, 20px), var(--win-y, 100px), 0) scale(var(--win-scale, 1));
+            will-change: transform;
+            /* Убираем артефакты краев */
+            backface-visibility: hidden; 
+            
+            /* --- РАЗМЕР И АДАПТАЦИЯ (ИСПРАВЛЕНО) --- */
+            width: 340px;          /* Чуть шире по дефолту */
+            max-width: 95vw;       /* Чтобы не вылезало за экран мобилы */
+            min-height: 150px;     /* Минимальная высота */
+            height: auto;          /* ВАЖНО: Разрешаем окну расти вниз */
+            
+            /* --- ВОЗВРАЩЕНИЕ БЛЮРА (GLASSUI) --- */
+            background: rgba(25, 25, 25, 0.65); /* Полупрозрачный фон */
+            backdrop-filter: blur(16px) saturate(180%); /* Блюр + насыщенность */
+            -webkit-backdrop-filter: blur(16px) saturate(180%); /* Для Safari/iOS */
+            
+            border: 1px solid rgba(255, 255, 255, 0.12); /* Тонкая обводка */
+            border-top: 1px solid rgba(255, 255, 255, 0.25); /* Блик сверху */
+            border-radius: 16px;   /* Более скругленные углы */
+            
+            /* Глубокая тень для объема */
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+            
+            display: flex; 
+            flex-direction: column;
+            pointer-events: auto;
+            overflow: hidden; /* Обрезаем контент по скруглению */
+            color: #eee;
+            
+            /* ВАЖНО: Убрали 'contain: strict', чтобы контент мог растягивать окно */
+            
+            /* Анимация появления */
+            opacity: 0;
+        }
+
+        /* Анимация открытия */
+        .window.opening { animation: rubberPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        .window.active { opacity: 1; }
+
+        @keyframes rubberPop {
+            0% { opacity: 0; transform: translate3d(var(--win-x), calc(var(--win-y) + 40px), 0) scale(0.8); }
+            100% { opacity: 1; transform: translate3d(var(--win-x), var(--win-y), 0) scale(1); }
+        }
+
+        /* Стиль при перетаскивании (отключаем блюр только в момент движения для FPS) */
+        .window.dragging {
+            box-shadow: 0 40px 80px rgba(0,0,0,1);
+            z-index: 9999 !important;
+            opacity: 0.95;
+            transition: none;
+            
+            /* ОПЦИОНАЛЬНО: Если будет сильно лагать при перетаскивании, 
+               раскомментируй строки ниже (это отключит блюр только пока тащишь): */
+            /* backdrop-filter: none; */
+            /* background: #1a1a1a; */
+        }
+        .win-title { 
+            font-size: 12px; 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            color: #aaa; 
+        }
+        
+        .win-close { 
+            width: 20px; 
+            height: 20px; 
+            border-radius: 50%; 
+            background: #ff5f56; 
+            cursor: pointer; 
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+        }
+
+        .win-content {
+            flex: 1; 
+            padding: 15px; 
+            overflow-y: auto;
+            font-family: monospace; 
+            font-size: 13px;
+            line-height: 1.5;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .lp-btn {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            border: none; 
+            color: white; 
+            padding: 12px; 
+            width: 100%;
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        
+        .lp-btn:active { 
+            opacity: 0.8; 
+            transform: scale(0.98); 
+        }
+        
+        .lp-input {
+            background: #0a0a0a; 
+            border: 1px solid #444; 
+            color: #fff;
+            padding: 12px; 
+            width: 100%; 
+            border-radius: 8px;
+            font-family: monospace; 
+            margin-bottom: 10px;
+        }
+        
+        .lp-input:focus { 
+            border-color: #3498db; 
+            outline: none; 
+        }
+
+        .header { 
+            text-align: center; 
+            margin-bottom: 15px; 
+            width: 100%; 
+            max-width: 400px; 
+            z-index: 1; 
+        }
+        
+        .logo { 
+            font-size: 22px; 
+            font-weight: 800; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 8px; 
+            color: #fff; 
+        }
+        
+        .badge { 
+            background: linear-gradient(135deg, #2980b9, #6dd5fa); 
+            font-size: 9px; 
+            padding: 3px 6px; 
+            border-radius: 6px; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+        }
+
+        .video-card {
+            position: relative; 
+            width: 100%; 
+            max-width: 400px; 
+            aspect-ratio: 4/3;
+            background: #000; 
+            border-radius: var(--radius); 
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
+            margin-bottom: 10px; 
+            border: 1px solid #333;
+            z-index: 1;
+        }
+        
+        video, canvas { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+        }
+        
+        #roi-overlay { 
+            z-index: 10; 
+        }
+
+        .status-bar { 
+            display: flex; 
+            justify-content: space-between; 
+            width: 100%; 
+            max-width: 400px; 
+            font-size: 11px; 
+            font-weight: 600; 
+            margin-bottom: 15px; 
+            padding: 0 5px; 
+            z-index: 1; 
+        }
+        
+        #status-text { 
+            color: var(--primary); 
+            text-transform: uppercase; 
+        }
+        
+        #cam-res { 
+            color: var(--text-dim); 
+        }
+
+        .controls {
+            background: var(--card); 
+            padding: 20px; 
+            border-radius: var(--radius);
+            width: 100%; 
+            max-width: 400px; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2); 
+            border: 1px solid #2a2a2a;
+            z-index: 1; 
+            position: relative;
+        }
+
+        .control-group { 
+            margin-bottom: 15px; 
+        }
+        
+        .label { 
+            display: block; 
+            font-size: 11px; 
+            color: var(--text-dim); 
+            margin-bottom: 6px; 
+            text-transform: uppercase; 
+            font-weight: 700; 
+        }
+
+        select, input.sys-input {
+            width: 100%; 
+            background: #252525; 
+            border: 1px solid #333; 
+            color: #fff;
+            padding: 12px; 
+            border-radius: 8px; 
+            font-size: 14px; 
+            outline: none; 
+            transition: border 0.2s;
+        }
+        
+        select:focus, input.sys-input:focus { 
+            border-color: var(--primary); 
+        }
+
+        .btn-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 10px; 
+            margin-bottom: 10px; 
+        }
+        
+        button {
+            width: 100%; 
+            padding: 14px; 
+            border: none; 
+            border-radius: 8px;
+            font-weight: 700; 
+            font-size: 13px; 
+            cursor: pointer; 
+            color: #fff;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        
+        button:active { 
+            transform: scale(0.97); 
+            opacity: 0.8; 
+        }
+
+        .btn-record { 
+            background: #34495e; 
+        }
+        
+        .btn-verify { 
+            background: var(--primary); 
+        }
+        
+        .btn-warning { 
+            background: var(--accent); 
+            color: #121212; 
+            margin-top: 5px; 
+        }
+        
+        .btn-ghost { 
+            background: transparent; 
+            border: 1px solid #444; 
+            color: var(--text-dim); 
+            margin-top: 10px; 
+            padding: 10px; 
+        }
+        
+        .btn-solar { 
+            background: linear-gradient(45deg, #f1c40f, #e67e22); 
+            color: #000; 
+            text-shadow: 0 1px 0 rgba(255,255,255,0.3); 
+        }
+
+        .hidden { 
+            display: none !important; 
+        }
+        
+        .dock { 
+            position: fixed; 
+            right: 15px; 
+            top: 50%; 
+            transform: translateY(-50%); 
+            display: flex; 
+            flex-direction: column; 
+            gap: 12px; 
+            z-index: 8000;
+            padding: 10px; 
+            background: rgba(0,0,0,0.3); 
+            border-radius: 20px;
+            backdrop-filter: blur(5px); 
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .dock-icon { 
+            width: 44px; 
+            height: 44px; 
+            background: rgba(40,40,40,0.85); 
+            border: 1px solid rgba(255,255,255,0.1); 
+            border-radius: 12px; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            font-size: 20px; 
+            cursor: pointer; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            backdrop-filter: blur(5px);
+        }
+
+        .dock-icon:active { 
+            transform: scale(0.9); 
+            border-color: var(--accent); 
+        }
+
+        .offline-indicator {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #e74c3c;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 10000;
+            display: none;
+        }
+
+        .footer {
+            margin-top: 15px;
+            font-size: 11px;
+            color: var(--text-dim);
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="pwa-install-btn">📱 Install App</button>
+    <div class="pwa-status" id="pwa-status">PWA</div>
+    <div class="offline-indicator" id="offline-indicator">🔴 OFFLINE</div>
+
+    <div id="desktop-area"></div>
+
+    <div class="header">
+        <div class="logo">
+            ⚡ Lightprint <span class="badge">v20.0 PWA</span>
+        </div>
+    </div>
+
+    <div class="video-card">
+        <video id="cam" autoplay playsinline muted></video>
+        <canvas id="roi-overlay"></canvas>
+    </div>
+
+    <div class="status-bar">
+        <span id="status-text">Booting Kernel...</span>
+        <span id="cam-res">INIT</span>
+    </div>
+
+    <div class="controls">
+        
+        <div class="control-group">
+            <span class="label">Device Mode</span>
+            <select id="role-select">
+                <option value="rx">📡 Receiver (Camera)</option>
+                <option value="tx">🔦 Transmitter (Light)</option>
+            </select>
+        </div>
+
+        <div id="rx-panel">
+            <div class="control-group">
+                <span class="label">Signal Type</span>
+                <select id="signalType">
+                    <option value="data_neural">🧠 Neural Auth (Face/Object)</option>
+                    <option value="data">💡 Light Signal (VLC)</option>
+                </select>
+            </div>
+
+            <div class="btn-grid">
+                <button id="btn-enroll" class="btn-record">● RECORD</button>
+                <button id="btn-verify" class="btn-verify">🔍 VERIFY</button>
+            </div>
+
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
+                <span class="label" style="color: #f1c40f;">☀️ Solar Anchoring (SBTA)</span>
+                <div class="btn-grid">
+                    <button id="btn-solar-enroll" class="btn-solar">LOCK SUN</button>
+                    <button id="btn-solar-verify" class="btn-solar" style="filter: hue-rotate(15deg);">VERIFY SUN</button>
+                </div>
+            </div>
+
+            <button id="btn-clear" class="btn-warning">🗑 CLEAR DB</button>
+            <button id="btn-switch-cam" class="btn-ghost">📷 Switch Camera</button>
+        </div>
+
+        <div id="tx-panel" class="hidden">
+            <div class="control-group">
+                <span class="label">Text to Transmit</span>
+                <input id="data-to-send" class="sys-input" placeholder="Enter message...">
+            </div>
+            <button id="btn-send" class="btn-verify">📡 SEND SIGNAL</button>
+        </div>
+
+    </div>
+
+    <div class="footer">
+        WebGPU: <span id="gpu-status">DETECTING</span> | TF.js: <span id="tf-status">LOADING</span>
+    </div>
+
+    <div id="transmitter" class="hidden"></div>
+
+    <input type="file" id="lpk-upload" accept=".json,.lpk" style="display:none" />
+
+    <div class="dock" id="app-dock-container">
+        <div class="dock-icon">⌛</div>
+    </div>
+
+</body>
+  </html>
